@@ -19,6 +19,7 @@ class Wave2D:
         self.dy = None
         self.mx = None
         self.my = None
+        self.D = None
 
     def create_mesh(self, N, sparse=False):
         """Create 2D mesh and store in self.xij and self.yij"""
@@ -34,13 +35,13 @@ class Wave2D:
         D = sparse.diags([1, -2, 1], [-1, 0, 1], (N + 1, N + 1), "lil")
         D[0, :4] = 2, -5, 4, -1
         D[-1, -4:] = -1, 4, -5, 2
-        return D
+        self.D = D
 
     @property
     def w(self):
         """Return the dispersion coefficient"""
         if self.mx is None or self.my is None:
-            return ValueError("mx or my is None")
+            raise ValueError("mx or my is None")
         self.kx = self.mx * np.pi
         self.ky = self.my * np.pi
         return self.c * np.sqrt(self.kx**2 + self.ky**2)
@@ -66,13 +67,9 @@ class Wave2D:
         u_exact = sp.lambdify((x, y, t), self.ue(mx, my), "numpy")
         U_n = u_exact(self.xij, self.yij, 0.0)
 
-        D = self.D2(self.N)
-        L_U_n = (D @ U_n) / (self.dx**2) + (U_n @ D.T) / (self.dy**2)
+        self.D2(self.N)
+        L_U_n = (self.D @ U_n) / (self.dx**2) + (U_n @ self.D.T) / (self.dy**2)
         U_nm1 = U_n + 0.5 * (self.c**2) * (self.dt**2) * L_U_n
-
-        for A in (U_n, U_nm1):
-            A[0, :] = A[-1, :] = 0.0
-            A[:, 0] = A[:, -1] = 0.0
 
         self.U_n = U_n
         self.U_nm1 = U_nm1
@@ -92,17 +89,17 @@ class Wave2D:
         t0 : number
             The time of the comparison
         """
-        u_func = sp.lambdify((x, y), self.ue, "numpy")
-        U_exact = u_func(self.xij, self.yij)
+        u_func = sp.lambdify((x, y, t), self.ue(self.mx, self.my), "numpy")
+        U_exact = u_func(self.xij, self.yij, t0)
         error = u - U_exact
-        return np.sqrt(np.sum(error**2) * (self.h**2))
+        return np.sqrt(np.sum(error**2) * self.dx * self.dy)
 
     def apply_bcs(self, D):
         # Zero bounadray fence around whole matrix
-        D[0, :] = 0
-        D[:, 0] = 0
-        D[-1, :] = 0
-        D[:, -1] = 0
+        D[0, :] = 0.0
+        D[:, 0] = 0.0
+        D[-1, :] = 0.0
+        D[:, -1] = 0.0
         return D
 
     def __call__(self, N, Nt, cfl=0.5, c=1.0, mx=3, my=3, store_data=-1):
@@ -137,9 +134,10 @@ class Wave2D:
         U_n = self.U_n
         U_nm1 = self.U_nm1
 
-        D = self.D2(N)
-        D = self.apply_bcs(D)
+        u_n = self.apply_bcs(U_n)
+        u_nm1 = self.apply_bcs(U_nm1)
 
+        self.D2(N)
         U_exact = sp.lambdify((x, y, t), self.ue(mx, my), "numpy")
 
         if store_data > 0:
@@ -150,11 +148,10 @@ class Wave2D:
             errors = [np.sqrt(np.sum(e0**2) * self.dx * self.dy)]
 
         for n in range(1, Nt + 1):
-            LUn = (D @ U_n) / (self.dx**2) + (U_n @ D.T) / (self.dy**2)
+            LUn = (self.D @ U_n) / (self.dx**2) + (U_n @ self.D.T) / (self.dy**2)
             Unp1 = 2 * U_n - U_nm1 + (self.c**2) * (self.dt**2) * LUn
 
-            Unp1[0, :] = Unp1[-1, :] = 0.0
-            Unp1[:, 0] = Unp1[:, -1] = 0.0
+            self.apply_bcs(Unp1)
 
             U_nm1, U_n = U_n, Unp1
 
@@ -210,13 +207,22 @@ class Wave2D:
 
 class Wave2D_Neumann(Wave2D):
     def D2(self, N):
-        raise NotImplementedError
+        D = sparse.diags([1.0, -2.0, 1.0], [-1, 0, 1], (N + 1, N + 1), format="lil")
+        # ghost-point closure for homogeneous Neumann
+        D[0, :] = 0.0
+        D[0, 0] = -2.0
+        D[0, 1] = 2.0
+        D[-1, :] = 0.0
+        D[-1, -1] = -2.0
+        D[-1, -2] = 2.0
+        self.D = D
 
     def ue(self, mx, my):
-        raise NotImplementedError
+        return sp.cos(mx * sp.pi * x) * sp.cos(my * sp.pi * y) * sp.cos(self.w * t)
 
-    def apply_bcs(self):
-        raise NotImplementedError
+    def apply_bcs(self, D):
+        # operator already makes sure du/dn = 0
+        ...
 
 
 def test_convergence_wave2d():
@@ -232,4 +238,13 @@ def test_convergence_wave2d_neumann():
 
 
 def test_exact_wave2d():
-    raise NotImplementedError
+    N, mx, my = 16, 2, 3
+    sol = Wave2D()
+
+    out = sol(N, Nt=0, mx=mx, my=my, store_data=1)
+    U0 = out[0]
+
+    ue = sp.lambdify((x, y, t), sol.ue(mx, my), "numpy")
+    Ue0 = ue(sol.xij, sol.yij, 0.0)
+
+    assert np.allclose(U0, Ue0, rtol=1e-13, atol=1e-13)
