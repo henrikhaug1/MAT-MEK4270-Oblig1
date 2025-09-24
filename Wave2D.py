@@ -134,8 +134,8 @@ class Wave2D:
         U_n = self.U_n
         U_nm1 = self.U_nm1
 
-        u_n = self.apply_bcs(U_n)
-        u_nm1 = self.apply_bcs(U_nm1)
+        U_n = self.apply_bcs(self.U_n)
+        U_nm1 = self.apply_bcs(self.U_nm1)
 
         self.D2(N)
         U_exact = sp.lambdify((x, y, t), self.ue(mx, my), "numpy")
@@ -222,7 +222,7 @@ class Wave2D_Neumann(Wave2D):
 
     def apply_bcs(self, D):
         # operator already makes sure du/dn = 0
-        ...
+        return D
 
 
 def test_convergence_wave2d():
