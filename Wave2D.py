@@ -248,3 +248,22 @@ def test_exact_wave2d():
     Ue0 = ue(sol.xij, sol.yij, 0.0)
 
     assert np.allclose(U0, Ue0, rtol=1e-13, atol=1e-13)
+
+    N = 64
+    mx = my = 3
+    c = 1 / np.sqrt(2)
+    tol = 1e-12
+
+    # Dirichlet
+    sol_dirichlet = Wave2D()
+    out_dir = sol_dirichlet(N, Nt=0, c=c, mx=mx, my=my, store_data=1)
+    U0_dir = out_dir[0]
+    err_dir = sol_dirichlet.l2_error(U0_dir, 0.0)
+    assert err_dir < tol
+
+    # Neumann
+    sol_neumann = Wave2D_Neumann()
+    out_neu = sol_neumann(N, Nt=0, c=c, mx=mx, my=my, store_data=1)
+    U0_neu = out_neu[0]
+    err_neu = sol_neumann.l2_error(U0_neu, 0.0)
+    assert err_neu < tol
