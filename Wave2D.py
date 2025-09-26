@@ -2,7 +2,10 @@ import numpy as np
 import sympy as sp
 import scipy.sparse as sparse
 import matplotlib.pyplot as plt
-from matplotlib import cm
+from matplotlib import animation
+from pathlib import Path
+from matplotlib.animation import FuncAnimation, PillowWriter
+from mpl_toolkits.mplot3d import Axes3D
 
 x, y, t = sp.symbols("x,y,t")
 
@@ -267,3 +270,119 @@ def test_exact_wave2d():
     U0_neu = out_neu[0]
     err_neu = sol_neumann.l2_error(U0_neu, 0.0)
     assert err_neu < tol
+
+
+def make_neumann_movie_wire(
+    mx=2,
+    my=2,
+    c=1 / np.sqrt(2),
+    cfl=0.4,
+    N=80,
+    Nt=200,
+    zlim=1.0,
+    fps=25,
+    outfile_prefix="neumann_wire_m2_c_1_over_sqrt2",
+):
+    solver = Wave2D_Neumann()
+    frames = solver(N=N, Nt=Nt, cfl=cfl, c=c, mx=mx, my=my, store_data=1)
+
+    X, Y = solver.xij, solver.yij
+    stride = max(1, N // 24)
+
+    fig = plt.figure(figsize=(7, 5), dpi=120)
+    ax = fig.add_subplot(111, projection="3d")
+    ax.view_init(elev=30, azim=-60)
+    ax.set_box_aspect([1, 1, 0.5])
+
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+    ax.set_zlabel("u(x,y,t)")
+    ax.set_zlim(-zlim, zlim)
+
+    title_tmpl = r"Neumann (wire): $m_x=m_y=2,\; c=1/\sqrt{{2}}$   $t={:.3f}$"
+    ax.set_title(title_tmpl.format(0.0))
+
+    Z0 = frames[0]
+    wire = ax.plot_wireframe(X, Y, Z0, rstride=stride, cstride=stride, linewidth=0.7)
+
+    def update(k):
+        nonlocal wire
+        wire.remove()
+        wire = ax.plot_wireframe(
+            X, Y, frames[k], rstride=stride, cstride=stride, linewidth=0.7
+        )
+        ax.set_title(title_tmpl.format(k * solver.dt))
+        return [wire]
+
+    anim = animation.FuncAnimation(fig, update, frames=Nt + 1, interval=40, blit=False)
+
+    out_mp4 = Path(f"{outfile_prefix}.mp4")
+    out_gif = Path(f"{outfile_prefix}.gif")
+
+    saved_path = None
+    try:
+        Writer = animation.FFMpegWriter
+        anim.save(out_mp4, writer=Writer(fps=fps))
+        saved_path = out_mp4
+    except Exception:
+        from matplotlib.animation import PillowWriter
+
+        anim.save(out_gif, writer=PillowWriter(fps=fps))
+        saved_path = out_gif
+
+    plt.close(fig)
+    print(f"Saved animation to: {saved_path.resolve()}")
+    return saved_path
+
+
+def make_neumannwave_gif():
+    mx = my = 2
+    c = 1 / np.sqrt(2)
+    N = 64
+    Nt = 100
+    store_every = 2
+    filename = Path("report/neumannwave.gif")
+
+    solver = Wave2D_Neumann()
+    frames = solver(N=N, Nt=Nt, c=c, mx=mx, my=my, store_data=store_every)
+
+    x = np.linspace(0, solver.Lx, solver.N + 1)
+    y = np.linspace(0, solver.Ly, solver.N + 1)
+    X, Y = np.meshgrid(x, y, indexing="ij")
+
+    fig = plt.figure(figsize=(6, 5))
+    ax = fig.add_subplot(111, projection="3d")
+    ax.set_zlim(-1, 1)
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+    ax.set_zlabel("u(x, y, t)")
+    ax.set_title("Wave2D Neumann Evolution")
+
+    surf = [
+        ax.plot_surface(X, Y, frames[0], cmap="viridis", edgecolor="k", linewidth=0.2)
+    ]
+
+    def update(frame_data):
+        for artist in ax.collections:
+            artist.remove()
+        surf[0] = ax.plot_surface(
+            X, Y, frame_data, cmap="viridis", edgecolor="k", linewidth=0.2
+        )
+        return surf
+
+    frame_data = [frames[k] for k in sorted(frames.keys())]
+
+    if not frame_data:
+        raise RuntimeError("No frames generated for animation!")
+
+    anim = FuncAnimation(fig, update, frames=frame_data, blit=False)
+
+    filename.parent.mkdir(parents=True, exist_ok=True)
+
+    anim.save(filename, writer=PillowWriter(fps=10), dpi=80)
+
+    print(f"Saved 3D wave animation to {filename.resolve()}")
+
+
+if __name__ == "__main__":
+    make_neumannwave_gif()
